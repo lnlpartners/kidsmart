@@ -86,333 +86,118 @@ export default function UploadPage() {
       return;
     }
 
-    const startTime = Date.now();
-    console.log("--- 🚀 Starting Assignment Processing ---", new Date().toISOString());
-    console.log(`Child ID: ${selectedChild}, Title: ${assignmentTitle}, Subject: ${subject}, Files: ${files.length}`);
-
     setIsProcessing(true);
     setError(null);
     setProcessedCount(0);
-    setTotalCount(files.length + 2); // files + analysis + saving
+    setTotalCount(4); // Upload, Extract, Analyze, Save
 
     try {
       const selectedChildData = children.find(c => c.id === selectedChild);
-      // Ensure child data is found
       if (!selectedChildData) {
         throw new Error("Selected child not found. Please select a valid child.");
       }
-      const childFirstName = selectedChildData.name.split(' ')[0];
 
-      // Step 1: Upload all files with error handling
-      const uploadStartTime = Date.now();
+      // Step 1: Upload files
       setProcessingStep("Uploading files...");
-      console.log("--- étape 1: Uploading files ---", new Date().toISOString());
       const fileUrls = [];
 
       for (let i = 0; i < files.length; i++) {
-        const fileUploadStart = Date.now();
-        console.log(`Uploading file ${i + 1}: ${files[i].name}`);
-
-        try {
-          const { file_url } = await UploadFile({ file: files[i] });
-          const fileUploadEnd = Date.now();
-          console.log(`✅ File ${i + 1} uploaded successfully in ${fileUploadEnd - fileUploadStart}ms. URL: ${file_url}`);
-          fileUrls.push(file_url);
-          setProcessedCount(i + 1);
-        } catch (uploadError) {
-          console.error(`❌ Failed to upload file ${i + 1}:`, uploadError);
-          // Re-throw specific error to be caught by the main catch block
-          throw new Error(`Failed to upload file "${files[i].name}": ${uploadError.message}`);
-        }
+        const { file_url } = await UploadFile({ file: files[i] });
+        fileUrls.push(file_url);
       }
+      setProcessedCount(1);
 
-      const uploadEndTime = Date.now();
-      console.log(`⏱️ Total file upload time: ${uploadEndTime - uploadStartTime}ms (${((uploadEndTime - uploadStartTime) / 1000).toFixed(2)}s)`);
-
-      // Step 2: Extract text from all files with error handling
-      const extractStartTime = Date.now();
+      // Step 2: Extract content
       setProcessingStep("Extracting homework content...");
-      console.log("--- étape 2: Extracting content from files ---", new Date().toISOString());
-      let allExtractedText = "";
-      const allQuestions = [];
-
-      for (let index = 0; index < fileUrls.length; index++) {
-        const file_url = fileUrls[index];
-        const extractFileStart = Date.now();
-        console.log(`Extracting data from file ${index + 1}: ${file_url}`);
-
-        try {
-          const extractResult = await ExtractDataFromUploadedFile({
-            file_url,
-            json_schema: {
-              type: "object",
-              properties: {
-                extracted_text: { type: "string" },
-                questions: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      question_number: { type: "number" },
-                      question_text: { type: "string" },
-                      options: { type: "array", items: { type: "string" } },
-                      student_answer: { type: "string" },
-                      correct_answer: { type: "string" }
-                    }
-                  }
-                }
-              }
-            }
-          });
-
-          const extractFileEnd = Date.now();
-          console.log(`🔍 Extraction Result for file ${index + 1} (${extractFileEnd - extractFileStart}ms):`, extractResult);
-
-          if (extractResult.status === "success") {
-            console.log(`✅ Extraction successful for file ${index + 1}.`);
-            allExtractedText += (extractResult.output.extracted_text || "") + "\n\n--- PAGE BREAK ---\n\n";
-            if (extractResult.output.questions) {
-              allQuestions.push(...extractResult.output.questions);
-            }
-          } else {
-            console.error(`❗️ Extraction failed for file ${index + 1}.`, extractResult.details);
-            // Append a specific failure message to indicate an issue with this page
-            allExtractedText += "\n\n--- FAILED TO EXTRACT PAGE ---\n\n";
+      const extractResult = await ExtractDataFromUploadedFile({
+        file_url: fileUrls[0],
+        json_schema: {
+          type: "object",
+          properties: {
+            extracted_text: { type: "string" },
+            questions: { type: "array" }
           }
-        } catch (extractError) {
-          console.error(`❌ Network or API error during extraction for file ${index + 1}:`, extractError);
-          // Append a specific network error message but continue processing other files
-          allExtractedText += "\n\n--- NETWORK ERROR DURING EXTRACTION ---\n\n";
         }
-      }
+      });
+      setProcessedCount(2);
 
-      const extractEndTime = Date.now();
-      console.log(`⏱️ Total extraction time: ${extractEndTime - extractStartTime}ms (${((extractEndTime - extractStartTime) / 1000).toFixed(2)}s)`);
-      console.log("📚 Combined Extracted Text Length:", allExtractedText.length);
-      console.log("❓ Combined Questions Found:", allQuestions.length, allQuestions);
-      setProcessedCount(files.length + 1);
-
-      // Check if we have any meaningful extracted text after all attempts
-      if (!allExtractedText.trim() || allExtractedText.trim().replace(/--- (FAILED TO EXTRACT PAGE|NETWORK ERROR DURING EXTRACTION) ---/g, '').trim().length === 0) {
-        throw new Error("Unable to extract any readable content from the uploaded files. Please ensure the images are clear, well-lit, and contain readable text.");
-      }
-
-      // Step 3: Analyze and grade the homework with error handling
-      const gradingStartTime = Date.now();
+      // Step 3: Analyze and grade
       setProcessingStep("Analyzing homework and generating feedback...");
-      console.log("--- étape 3: Sending to AI for grading ---", new Date().toISOString());
-
-      const gradingPrompt = `You are an expert elementary school teacher grading homework for ${childFirstName}, a grade ${selectedChildData?.grade_level} student.
-
-HOMEWORK CONTENT:
-${allExtractedText}
-
-EXTRACTED QUESTIONS (if available):
-${JSON.stringify(allQuestions, null, 2)}
-
-Please analyze this ${subject} homework and provide:
-1. Count the total number of questions
-2. Determine how many answers are correct
-3. Calculate the score percentage
-4. Identify specific strengths (what they did well)
-5. Identify areas for improvement (specific skills to work on)
-6. Provide encouraging, constructive feedback appropriate for a ${selectedChildData?.grade_level} grader
-
-Be encouraging and focus on learning opportunities. If some questions can't be clearly read, note that in your analysis.`;
-
-      console.log("🤖 AI Grading Prompt length:", gradingPrompt.length, "characters");
-      console.log("🤖 AI Grading Prompt (first 500 chars):", gradingPrompt.substring(0, 500) + "...");
-
-      let gradingResult;
-      try {
-        gradingResult = await InvokeLLM({
-          prompt: gradingPrompt,
-          response_json_schema: {
-            type: "object",
-            properties: {
-              total_questions: { type: "number" },
-              correct_answers: { type: "number" },
-              score_percentage: { type: "number" },
-              detailed_feedback: { type: "string" },
-              strengths: { type: "array", items: { type: "string" } },
-              weaknesses: { type: "array", items: { type: "string" } },
-              skill_areas_to_practice: { type: "array", items: { type: "string" } },
-              question_analysis: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    question_number: { type: "number" },
-                    question_text: { type: "string" },
-                    student_answer: { type: "string" },
-                    correct_answer: { type: "string" },
-                    is_correct: { type: "boolean" },
-                    explanation: { type: "string" }
-                  }
-                }
-              }
-            }
+      const gradingResult = await InvokeLLM({
+        prompt: `Grade this ${subject} homework for a grade ${selectedChildData?.grade_level} student`,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            total_questions: { type: "number" },
+            correct_answers: { type: "number" },
+            score_percentage: { type: "number" },
+            detailed_feedback: { type: "string" },
+            strengths: { type: "array", items: { type: "string" } },
+            weaknesses: { type: "array", items: { type: "string" } },
+            skill_areas_to_practice: { type: "array", items: { type: "string" } },
+            question_analysis: { type: "array" }
           }
-        });
-      } catch (gradingError) {
-        console.error(`❌ Network or API error during AI grading:`, gradingError);
-        throw new Error(`AI grading failed: ${gradingError.message}. Please try again or check your internet connection.`);
-      }
+        }
+      });
+      setProcessedCount(3);
 
-      const gradingEndTime = Date.now();
-      console.log(`⏱️ AI grading time: ${gradingEndTime - gradingStartTime}ms (${((gradingEndTime - gradingStartTime) / 1000).toFixed(2)}s)`);
-      console.log("✅ AI Grading Result:", gradingResult);
-
-      // Clean and validate the AI response data before saving
-      console.log("🧹 Cleaning AI response data...");
-
-      const cleanArrayOfStrings = (arr) => {
-        if (!Array.isArray(arr)) return [];
-        return arr
-          .filter(item => item != null && item !== undefined)
-          .map(item => String(item).trim())
-          .filter(item => item.length > 0 && item.length < 500); // reasonable string length
-      };
-
-      const cleanedGradingResult = {
-        total_questions: Math.max(1, Math.floor(Number(gradingResult.total_questions) || 1)),
-        correct_answers: Math.max(0, Math.floor(Number(gradingResult.correct_answers) || 0)),
-        score_percentage: Math.max(0, Math.min(100, Math.floor(Number(gradingResult.score_percentage) || 0))),
-        detailed_feedback: String(gradingResult.detailed_feedback || "Assignment analyzed").trim().substring(0, 2000),
-        strengths: cleanArrayOfStrings(gradingResult.strengths),
-        weaknesses: cleanArrayOfStrings(gradingResult.weaknesses),
-        skill_areas_to_practice: cleanArrayOfStrings(gradingResult.skill_areas_to_practice),
-        question_analysis: Array.isArray(gradingResult.question_analysis) ? gradingResult.question_analysis : []
-      };
-
-      console.log("✅ Cleaned grading result:", cleanedGradingResult);
-
-      setProcessedCount(files.length + 2);
-
-      // Step 4: Save the assignment with error handling
-      const saveStartTime = Date.now();
+      // Step 4: Save assignment
       setProcessingStep("Saving assignment...");
-      console.log("--- étape 4: Saving assignment to database ---", new Date().toISOString());
-
-      const assignmentPayload = {
+      const assignment = await Assignment.create({
         child_id: selectedChild,
         title: assignmentTitle,
         subject,
         grade_level: selectedChildData?.grade_level,
         original_file_url: fileUrls[0],
         additional_file_urls: fileUrls.slice(1),
-        processed_text: allExtractedText,
-        total_questions: cleanedGradingResult.total_questions,
-        correct_answers: cleanedGradingResult.correct_answers,
-        score_percentage: cleanedGradingResult.score_percentage,
-        strengths: cleanedGradingResult.strengths,
-        weaknesses: cleanedGradingResult.weaknesses,
-        detailed_feedback: cleanedGradingResult.detailed_feedback,
+        processed_text: extractResult.output?.extracted_text || '',
+        total_questions: gradingResult.total_questions,
+        correct_answers: gradingResult.correct_answers,
+        score_percentage: gradingResult.score_percentage,
+        strengths: gradingResult.strengths,
+        weaknesses: gradingResult.weaknesses,
+        detailed_feedback: gradingResult.detailed_feedback,
         status: "graded",
-        question_analysis: cleanedGradingResult.question_analysis,
-        skill_areas_to_practice: cleanedGradingResult.skill_areas_to_practice
-      };
+        question_analysis: gradingResult.question_analysis,
+        skill_areas_to_practice: gradingResult.skill_areas_to_practice
+      });
+      setProcessedCount(4);
 
-      console.log("💾 Assignment payload to be saved:", assignmentPayload);
-
-      let assignment;
-      try {
-        assignment = await Assignment.create(assignmentPayload);
-      } catch (saveError) {
-        console.error(`❌ Database save error:`, saveError);
-        throw new Error(`Failed to save assignment: ${saveError.message}. Please try again.`);
-      }
-
-      const saveEndTime = Date.now();
-      console.log(`⏱️ Database save time: ${saveEndTime - saveStartTime}ms (${((saveEndTime - saveStartTime) / 1000).toFixed(2)}s)`);
-      console.log("✅ Assignment saved successfully:", assignment);
-
-      // Step 5: Generate practice questions if skill areas were identified
-      let practiceStartTime, practiceEndTime; // Declare variables here
-      if (cleanedGradingResult.skill_areas_to_practice && cleanedGradingResult.skill_areas_to_practice.length > 0) {
-        practiceStartTime = Date.now();
-        console.log("--- étape 5: Generating practice questions ---", new Date().toISOString());
-        // Limit to 3 practice questions to avoid excessive API calls
-        for (const skillArea of cleanedGradingResult.skill_areas_to_practice.slice(0, 3)) {
-          try {
-            const practiceResult = await InvokeLLM({
-              prompt: `Create a practice question for a grade ${selectedChildData?.grade_level} student to help them improve in: ${skillArea}.
-              Subject: ${subject}
-              Make it appropriate for their level and similar to what they're learning.`,
-              response_json_schema: {
-                type: "object",
-                properties: {
-                  question: { type: "string" },
-                  options: { type: "array", items: { type: "string" } },
-                  correct_answer: { type: "string" },
-                  explanation: { type: "string" },
-                  question_type: { type: "string" }
-                }
+      // Generate practice questions
+      if (gradingResult.skill_areas_to_practice?.length > 0) {
+        for (const skillArea of gradingResult.skill_areas_to_practice.slice(0, 3)) {
+          const practiceResult = await InvokeLLM({
+            prompt: `Create a practice question for ${skillArea}`,
+            response_json_schema: {
+              type: "object",
+              properties: {
+                question: { type: "string" },
+                options: { type: "array" },
+                correct_answer: { type: "string" },
+                explanation: { type: "string" }
               }
-            });
+            }
+          });
 
-            await PracticeQuestion.create({
-              child_id: selectedChild,
-              assignment_id: assignment.id,
-              subject,
-              skill_area: skillArea,
-              question_type: practiceResult.question_type || "multiple_choice",
-              question: practiceResult.question,
-              options: practiceResult.options || [],
-              correct_answer: practiceResult.correct_answer,
-              explanation: practiceResult.explanation,
-              difficulty_level: "medium"
-            });
-          } catch (practiceError) {
-            console.warn(`Failed to create practice question for skill area "${skillArea}":`, practiceError);
-            // Do not re-throw here; practice questions are secondary and should not fail the entire process
-          }
+          await PracticeQuestion.create({
+            child_id: selectedChild,
+            assignment_id: assignment.id,
+            subject,
+            skill_area: skillArea,
+            question_type: "multiple_choice",
+            question: practiceResult.question,
+            options: practiceResult.options || [],
+            correct_answer: practiceResult.correct_answer,
+            explanation: practiceResult.explanation,
+            difficulty_level: "medium"
+          });
         }
-        practiceEndTime = Date.now();
-        console.log(`⏱️ Practice questions generation time: ${practiceEndTime - practiceStartTime}ms (${((practiceEndTime - practiceStartTime) / 1000).toFixed(2)}s)`);
       }
 
-      const totalEndTime = Date.now();
-      console.log(`--- 🎉 Processing Finished in ${totalEndTime - startTime}ms (${((totalEndTime - startTime) / 1000).toFixed(2)}s) ---`);
-      console.log("⏰ Time Breakdown:");
-      console.log(`  📤 Upload: ${uploadEndTime - uploadStartTime}ms`);
-      console.log(`  🔍 Extraction: ${extractEndTime - extractStartTime}ms`);
-      console.log(`  🤖 AI Grading: ${gradingEndTime - gradingStartTime}ms`);
-      console.log(`  💾 Database Save: ${saveEndTime - saveStartTime}ms`);
-      if (practiceStartTime && practiceEndTime) { // Conditionally log only if they were set
-        console.log(`  📝 Practice Qs: ${practiceEndTime - practiceStartTime}ms`);
-      }
-
-      // Navigate to the assignment details
       navigate(createPageUrl(`AssignmentDetails?id=${assignment.id}`));
 
     } catch (error) {
-      const errorTime = Date.now();
-      console.error(`--- ❗️ An error occurred after ${errorTime - startTime}ms ---`, error);
-
-      // Provide more specific error messages based on error type
-      let errorMessage = "An unexpected error occurred. Please try again.";
-
-      if (error.message.includes("Network Error") || error.message.includes("Failed to fetch")) {
-        errorMessage = "Network connection issue. Please check your internet connection and try again.";
-      } else if (error.message.includes("timeout")) {
-        errorMessage = "The request timed out. This might be due to large files or slow connection. Please try with smaller images or ensure a stable internet connection.";
-      } else if (error.message.includes("Failed to upload")) {
-        errorMessage = error.message + " Please check your internet connection and try again.";
-      } else if (error.message.includes("Unable to extract")) {
-        errorMessage = error.message + " Ensure the homework is clearly visible and well-lit.";
-      } else if (error.message.includes("AI grading failed")) {
-        errorMessage = error.message;
-      } else if (error.message.includes("Failed to save")) {
-        errorMessage = error.message;
-      } else if (error.message.includes("Selected child not found")) {
-        errorMessage = error.message;
-      } else if (error.message) {
-        // Fallback for any other specific errors thrown
-        errorMessage = error.message;
-      }
-
-      setError(errorMessage);
+      setError(error.message || "An error occurred while processing the assignment");
     }
 
     setIsProcessing(false);
